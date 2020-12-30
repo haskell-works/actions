@@ -36,8 +36,10 @@ async function cabalConfig() {
 async function run(inputs) {
     try {
         core.info('Preparing to setup a Haskell environment');
+        const home = process.env.HOME || process.env.USERPROFILE;
         const os = process.platform;
         const opts = opts_1.getOpts(opts_1.getDefaults(os), os, inputs);
+        core.info(`opts: ${opts}`);
         for (const [t, { resolved }] of Object.entries(opts).filter(o => o[1].enable))
             await core.group(`Installing ${t} version ${resolved}`, async () => installer_1.installTool(t, resolved, os));
         if (opts.stack.setup)
@@ -51,7 +53,7 @@ async function run(inputs) {
                     core.setOutput('cabal-store', 'C:\\sr');
                 }
                 else {
-                    core.setOutput('cabal-store', `${process.env.HOME}/.cabal/store`);
+                    core.setOutput('cabal-store', `${home}/.cabal/store`);
                 }
                 await exec_1.exec('cabal user-config update');
                 if (!opts.stack.enable)

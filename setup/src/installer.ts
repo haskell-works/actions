@@ -3,9 +3,11 @@ import {exec as e} from '@actions/exec';
 import {which} from '@actions/io';
 import {create as glob} from '@actions/glob';
 import * as tc from '@actions/tool-cache';
-import {promises as fs} from 'fs';
+import {promises as afs} from 'fs';
 import {join} from 'path';
 import type {OS, Tool} from './opts';
+import process from 'process';
+import * as fs from 'fs';
 
 // Don't throw on non-zero.
 const exec = async (cmd: string, args?: string[]): Promise<number> =>
@@ -20,6 +22,7 @@ async function configureOutputs(
   path: string,
   os: OS
 ): Promise<void> {
+  const home = process.env.HOME || process.env.USERPROFILE;
   core.setOutput(`${tool}-path`, path);
   core.setOutput(`${tool}-exe`, await which(tool));
   if (tool == 'stack') {
@@ -27,7 +30,7 @@ async function configureOutputs(
       core.exportVariable('STACK_ROOT', 'C:\\sr');
       core.setOutput('stack-root', 'C:\\sr');
     } else {
-      core.setOutput('stack-root', `${process.env.HOME}/.stack`);
+      core.setOutput('stack-root', `${home}/.stack`);
     }
   }
 }
@@ -68,10 +71,12 @@ async function isInstalled(
   version: string,
   os: OS
 ): Promise<boolean> {
+  const home = process.env.HOME || process.env.USERPROFILE;
+  console.log(`HOME: ${home}`);
   const toolPath = tc.find(tool, version);
   if (toolPath) return success(tool, version, toolPath, os);
 
-  const ghcupPath = `${process.env.HOME}/.ghcup${
+  const ghcupPath = `${home}/.ghcup${
     tool === 'ghc' ? `/ghc/${version}` : ''
   }/bin`;
   const v = tool === 'cabal' ? version.slice(0, 3) : version;
@@ -94,10 +99,13 @@ async function isInstalled(
   };
 
   for (const p of locations[tool]) {
-    const installedPath = await fs
-      .access(p)
+    console.log(`p: ${p}`);
+    const installedPath = await afs
+      .access(p || 'undefined')
       .then(() => p)
       .catch(() => undefined);
+
+    console.log(`installedPath: ${installedPath}`);
 
     if (installedPath) {
       // Make sure that the correct ghc is used, even if ghcup has set a
@@ -109,9 +117,11 @@ async function isInstalled(
     }
   }
 
+  console.log(`Check install path 1: ${ghcupPath}/cabal-${version}`);
+
   if (tool === 'cabal' && os !== 'win32') {
-    const installedPath = await fs
-      .access(`${ghcupPath}/cabal`)
+    const installedPath = await afs
+      .access(`${ghcupPath}/cabal-${version}`)
       .then(() => ghcupPath)
       .catch(() => undefined);
 
@@ -196,7 +206,7 @@ async function choco(tool: Tool, version: string): Promise<void> {
   ]);
   console.log('::SetupHaskellStopCommands::'); // Re-enable command execution
   // Add GHC to path automatically because it does not add until the end of the step and we check the path.
-  if (tool == 'ghc') core.addPath(getChocoPath(tool, version));
+  if (tool == 'ghc') core.addPath(getChocoPath(tool, version) || 'undefined');
 }
 
 async function ghcupBin(os: OS): Promise<string> {
@@ -209,7 +219,7 @@ async function ghcupBin(os: OS): Promise<string> {
       os === 'darwin' ? 'apple-darwin' : 'linux'
     }-ghcup-${v}`
   );
-  await fs.chmod(bin, 0o755);
+  await afs.chmod(bin, 0o755);
   return join(await tc.cacheFile(bin, 'ghcup', 'ghcup', v), 'ghcup');
 }
 
@@ -220,11 +230,53 @@ async function ghcup(tool: Tool, version: string, os: OS): Promise<void> {
   if (returnCode === 0) await exec(bin, ['set', tool, version]);
 }
 
-function getChocoPath(tool: Tool, version: string): string {
+function getChocoPath(tool: Tool, version: string): string | null {
+  console.log(`version: ${version}`);
+
+  if (tool === 'cabal') {
+    const chocoToolPath = join(
+      `${process.env.ChocolateyInstall}`,
+      'lib',
+      `${tool}.${version}`
+    );
+
+    console.log(`chocoToolPath: ${chocoToolPath}`);
+    const manifestPath =
+      chocoToolPath +
+      '/cabal-install-3.4.0.0-rc3-x86_64-unknown-mingw32.zip.txt';
+
+    if (!fs.existsSync(manifestPath)) {
+      return null;
+    }
+
+    const buffer = fs.readFileSync(manifestPath);
+
+    console.log(`buffer: ${buffer}`);
+
+    const [line] = buffer
+      .toString('utf8')
+      .replace(/^\uFEFF/gm, '')
+      .replace(/^\u00BB\u00BF/gm, '')
+      .replace(/\r\n/g, '\n')
+      .split('\n');
+    console.log(`line: ${line}`);
+
+    const chocoToolBinPath = line
+      .split('\\')
+      .reverse()
+      .splice(1)
+      .reverse()
+      .join('\\');
+    console.log(`chocoToolBinPath: ${chocoToolBinPath}`);
+
+    return chocoToolBinPath;
+  }
+
   // If chocolatey has a patch release for GHC, 'version' will be a.b.c.d
   // but GHC's version is still a.b.c and the chocolatey path contains both
   // (This is only valid for GHC. cabal-install has 4-segment versions)
   const ghcVersion = version.split('.').slice(0, 3).join('.');
+  console.log(`ghcVersion: ${ghcVersion}`);
   const chocoPath = join(
     `${process.env.ChocolateyInstall}`,
     'lib',
@@ -233,5 +285,8 @@ function getChocoPath(tool: Tool, version: string): string {
     tool === 'ghc' ? `${tool}-${ghcVersion}` : `${tool}-${version}`, // choco trims the ghc version here
     tool === 'ghc' ? 'bin' : ''
   );
+
+  console.log(`chocoPath: ${chocoPath}`);
+
   return chocoPath;
 }
