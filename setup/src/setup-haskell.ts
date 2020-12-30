@@ -20,6 +20,7 @@ export default async function run(
 ): Promise<void> {
   try {
     core.info('Preparing to setup a Haskell environment');
+    const home = process.env.HOME || process.env.USERPROFILE;
     const os = process.platform as OS;
     const opts = getOpts(getDefaults(os), os, inputs);
 
@@ -44,7 +45,7 @@ export default async function run(
           fs.appendFileSync(configFile, 'store-dir: C:\\sr\n');
           core.setOutput('cabal-store', 'C:\\sr');
         } else {
-          core.setOutput('cabal-store', `${process.env.HOME}/.cabal/store`);
+          core.setOutput('cabal-store', `${home}/.cabal/store`);
         }
 
         await exec('cabal user-config update');
